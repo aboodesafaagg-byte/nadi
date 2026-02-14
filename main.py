@@ -13,7 +13,7 @@ app = Flask(__name__)
 CORS(app)
 
 # --- Configuration ---
-MONGO_URI = os.environ.get('MONGODB_URI', 'YOUR_MONGODB_URI_HERE')
+MONGO_URI = os.environ.get('MONGODB_URI', 'mongodb+srv://zeusadmin:28oyX5thnmG2YerK@chatzeuscluster.kd3pgaa.mongodb.net/?retryWrites=true&w=majority&appName=ChatZeusCluster')
 API_SECRET = os.environ.get('API_SECRET', 'Zeusndndjddnejdjdjdejekk29393838msmskxcm9239484jdndjdnddjj99292938338zeuslojdnejxxmejj82283849')
 
 # --- Database ---
