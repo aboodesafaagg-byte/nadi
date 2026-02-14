@@ -1,74 +1,144 @@
 
 import requests
 import json
-import time
 import re
 
-# 🔥 الكوكيز الافتراضية المستخرجة من الصور
-DEFAULT_COOKIES = 'wordpress_sec_198f6e9e82ba200a53325105f201ddc5=mikey%7C1771590380%7CKJphcZkhBFCpXyLUDrDcGPi9XmNOC47IPCSEHAPyfXS%7C5e8e596c5389b65f91a30668be6f16c7134b98b3ae55a007ed360594dd035527; cf_clearance=qYXkJIaj1IiaBKgi561_IQ.9oWgJ3fx10itfVR20lXY-1765278736-1.2.1.1-soYoRwUhDSq_.2cCoaJ22MPadmCmaQ0cW3AkfA1L97BJIbxQQro5hvpmuJxhQaT57TxfEW10l9gQYsmy5QgrwLsiWHScUWVvqYzZufRRYs9LIDPAhyxiOnL2Byevi12fb8iAZWttVNlqYWeKjH06tTp8bNhPx4dsmudPpIh0qzijEZhRk8lK6nWip1SeDFO2Of35W2rBKDEtjidGFyIj1RU3B7Xt.4CVoQbE9pGFaS8gFTMOp.0qmMMiz1UmHoFc; wpmanga-body-contrast=light; wpmanga-reading-history=W3siaWQiOjEyODE3LCJjIjoiMzEzMDgiLCJwIjoxLCJpIjoiIiwidCI6MTc2ODEwMTY3MH1d; sbjs_migrations=1418474375998%3D1; sbjs_current_add=fd%3D2026-02-06%2012%3A25%3A57%7C%7C%7Cep%3Dhttps%3A%2F%2Fmarkazriwayat.com%2F%7C%7C%7Crf%3Dhttps%3A%2F%2Fwww.bing.com%2F; sbjs_first_add=fd%3D2026-02-06%2012%3A25%3A57%7C%7C%7Cep%3Dhttps%3A%2F%2Fmarkazriwayat.com%2F%7C%7C%7Crf%3Dhttps%3A%2F%2Fwww.bing.com%2F; sbjs_current=typ%3Dreferral%7C%7C%7Csrc%3Dbing.com%7C%7C%7Cmdm%3Dreferral%7C%7C%7Ccmp%3D%28none%29%7C%7C%7Ccnt%3D%2F%7C%7C%7Ctrm%3D%28none%29%7C%7C%7Cid%3D%28none%29%7C%7C%7Cplt%3D%28none%29%7C%7C%7Cfmt%3D%28none%29%7C%7C%7Ctct%3D%28none%29; sbjs_first=typ%3Dreferral%7C%7C%7Csrc%3Dbing.com%7C%7C%7Cmdm%3Dreferral%7C%7C%7Ccmp%3D%28none%29%7C%7C%7Ccnt%3D%2F%7C%7C%7Ctrm%3D%28none%29%7C%7C%7Cid%3D%28none%29%7C%7C%7Cplt%3D%28none%29%7C%7C%7Cfmt%3D%28none%29%7C%7C%7Ctct%3D%28none%29; sbjs_udata=vst%3D1%7C%7C%7Cuip%3D%28none%29%7C%7C%7Cuag%3DMozilla%2F5.0%20%28Windows%20NT%206.2%3B%20Win64%3B%20x64%29%20AppleWebKit%2F537.36%20%28KHTML%2C%20like%20Gecko%29%20Chrome%2F109.0.0.0%20Safari%2F537.36%20Edg%2F109.0.1518.140; wordpress_test_cookie=WP%20Cookie%20check; _lscache_vary=8d8d3777c370b0211addc5b0a9411cd9; wordpress_logged_in_198f6e9e82ba200a53325105f201ddc5=mikey%7C1771590380%7CKJphcZkhBFCpXyLUDrDcGPi9XmNOC47IPCSEHAPyfXS%7Cb7d906dce3f0b160d5c2f585bfec331fe7d0cc3e4640a74945cc619df837e5c9; sbjs_session=pgs%3D2%7C%7C%7Ccpg%3Dhttps%3A%2F%2Fmarkazriwayat.com%2F%3Fnsl_bypass_cache%3D74d71305203b9ce18787813c87e33f8c'
+# 🔥 القيم المستخرجة من الصور (جلسة حقيقية)
+REAL_SESSION_ID = "p2u5rg3a873jfq4s9wqr0hgpise6s545"
+REAL_CSRF_TOKEN = "r5N1EuEWndcd8KDEppfqeXqix12BfTPGby1QhySMCH22lg7B08pl6lqBHRg8xNsui"
+# تم فك الترميز من Token%20302... إلى Token 302...
+REAL_AUTH_TOKEN = "Token 302bd3c2f811704f0fddce79a14f56250f9cc652" 
 
 class NadiClient:
     def __init__(self, cookies_str=None):
-        self.base_url = "https://api.rewayat.club" 
-        # استخدم الكوكيز الممررة، وإذا كانت فارغة استخدم الافتراضية
-        self.cookies = cookies_str if cookies_str and len(cookies_str) > 20 else DEFAULT_COOKIES
+        self.base_url = "https://api.rewayat.club/api"
         
+        # بناء سلسلة الكوكيز الصلبة إذا لم يتم تمرير كوكيز
+        if not cookies_str:
+            self.cookies_dict = {
+                "sessionid": REAL_SESSION_ID,
+                "csrftoken": REAL_CSRF_TOKEN,
+                "auth.strategy": "google",
+                "auth._token.google": REAL_AUTH_TOKEN.replace(" ", "%20") # Re-encode for cookie
+            }
+            # تحويلها لنص للهيدر إذا لزم الأمر، لكن Requests يفضل Dict
+        else:
+            # محاولة تحليل النص الوارد
+            self.cookies_dict = {}
+            for pair in cookies_str.split(';'):
+                if '=' in pair:
+                    k, v = pair.strip().split('=', 1)
+                    self.cookies_dict[k] = v
+
+        # استخراج التوكن والـ CSRF لاستخدامهم في الهيدر
+        self.auth_token = self.cookies_dict.get("auth._token.google", REAL_AUTH_TOKEN).replace("%20", " ")
+        self.csrf_token = self.cookies_dict.get("csrftoken", REAL_CSRF_TOKEN)
+
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'application/json, text/plain, */*',
             'Content-Type': 'application/json',
             'Origin': 'https://rewayat.club',
             'Referer': 'https://rewayat.club/',
-            'Cookie': self.cookies
+            'X-CSRFToken': self.csrf_token,
+            'Authorization': self.auth_token 
         }
 
     def search_novel(self, query):
-        """Simulate the autocomplete search to find novel ID"""
+        """بحث حقيقي في مكتبة نادي الروايات"""
         try:
-            # Try public API first or the search endpoint derived from HTML logic
-            url = f"{self.base_url}/novels"
-            res = requests.get(url, params={'search': query, 'limit': 5}, headers=self.headers)
+            # بناءً على ملف المكتبة، البحث يتم عبر باراميتر search
+            url = f"{self.base_url}/novels/"
+            params = {
+                "search": query,
+                "limit": 10  # أو page_size
+            }
+            res = requests.get(url, params=params, headers=self.headers, cookies=self.cookies_dict)
+            
             if res.status_code == 200:
                 data = res.json()
-                results = data.get('results', data.get('data', data))
-                return results
+                # النتائج عادة تكون في root array أو داخل مفتاح results (Django REST default)
+                results = data.get('results', data) if isinstance(data, dict) else data
+                
+                # تنسيق البيانات للتطبيق
+                formatted = []
+                for item in results:
+                    formatted.append({
+                        "id": item.get('slug') or item.get('id'), # Slug هو المعرف في النادي غالباً
+                        "title": item.get('arabic') or item.get('english') or item.get('title'),
+                        "cover": item.get('poster_url') or item.get('cover'),
+                        "author": "نادي الروايات"
+                    })
+                return formatted
+            else:
+                print(f"Search Failed: {res.status_code} {res.text}")
+                return []
         except Exception as e:
-            print(f"Search Error: {e}")
-        return []
+            print(f"Search Exception: {e}")
+            return []
 
     def format_content(self, text):
-        """Format text to HTML as per Nadi requirements"""
+        """تنسيق النص ليناسب محرر النادي (HTML)"""
         lines = text.split('\n')
         formatted = []
         for line in lines:
             line = line.strip()
-            if not line:
-                continue
-            if re.match(r'^_{3,}$', line): # Separator
+            if not line: continue
+            if re.match(r'^_{3,}$', line):
                 formatted.append(f'<center>{line}</center>')
             else:
                 formatted.append(f'<p dir="auto">{line}</p>')
         return "".join(formatted)
 
-    def publish_chapter(self, novel_id_nadi, chapter_num, title, content):
-        """Send POST request to create chapter"""
-        url = f"{self.base_url}/chapters"
+    def publish_chapter(self, novel_slug_or_id, chapter_num, title, content):
+        """نشر فصل جديد"""
+        url = f"{self.base_url}/chapters/"
         
         html_content = self.format_content(content)
         
+        # بناءً على Vue component، البيانات المطلوبة هي:
+        # novel (slug/id), number, title, content, status, published_at
         payload = {
-            "novel": novel_id_nadi, # The ID in Nadi Database
+            "novel": novel_slug_or_id, 
             "number": float(chapter_num),
             "title": title,
             "content": html_content,
-            "status": "published", # or 'draft'
-            "published_at": None # Means 'Now'
+            "status": 1, # 1 usually means Published in Django choices, or "published" string
+            "published_at": None # Now
         }
 
         try:
-            res = requests.post(url, json=payload, headers=self.headers)
+            res = requests.post(url, json=payload, headers=self.headers, cookies=self.cookies_dict)
+            
             if res.status_code in [200, 201]:
                 return {"success": True, "data": res.json()}
+            else:
+                return {"success": False, "error": f"HTTP {res.status_code}: {res.text}"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def create_novel(self, title_ar, title_en, description, cover_url, genres):
+        """إنشاء رواية جديدة في النادي"""
+        url = f"{self.base_url}/novels/"
+        
+        # بناءً على ملف "إنشاء رواية"، الحقول هي:
+        # arabic, english, about, poster_url, genre (array of IDs), type (1=translated, 2=original)
+        
+        payload = {
+            "arabic": title_ar,
+            "english": title_en,
+            "about": description,
+            "poster_url": cover_url, # يفترض أنك رفعت الصورة مسبقاً أو ترسل رابط مباشر
+            "genre": genres, # [1, 2, 5] IDs
+            "original": False, # 1=Translated usually
+            "complete": False
+        }
+
+        try:
+            res = requests.post(url, json=payload, headers=self.headers, cookies=self.cookies_dict)
+            if res.status_code in [200, 201]:
+                data = res.json()
+                return {"success": True, "id": data.get('slug') or data.get('id')}
             else:
                 return {"success": False, "error": f"HTTP {res.status_code}: {res.text}"}
         except Exception as e:
