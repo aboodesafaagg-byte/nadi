@@ -3,30 +3,57 @@ import os
 import time
 import threading
 import schedule
+import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from pymongo import MongoClient
-from bson.objectid import ObjectId
 from nadi_client import NadiClient
 
 app = Flask(__name__)
 CORS(app)
 
 # --- Configuration ---
-MONGO_URI = os.environ.get('MONGODB_URI', 'mongodb+srv://zeusadmin:28oyX5thnmG2YerK@chatzeuscluster.kd3pgaa.mongodb.net/?retryWrites=true&w=majority&appName=ChatZeusCluster')
+NODE_BACKEND_URL = os.environ.get('NODE_BACKEND_URL', 'https://c-production-a9ce.up.railway.app')
 API_SECRET = os.environ.get('API_SECRET', 'Zeusndndjddnejdjdjdejekk29393838msmskxcm9239484jdndjdnddjj99292938338zeuslojdnejxxmejj82283849')
 
-# --- Database ---
-try:
-    client = MongoClient(MONGO_URI)
-    db = client.get_database() # Uses default DB from URI
-    print("✅ Connected to MongoDB")
-except Exception as e:
-    print(f"❌ MongoDB Connection Error: {e}")
-
 # --- In-Memory Scheduler State ---
-# Structure: { job_id: { 'novel_id': ..., 'target_nadi_id': ..., 'current_ch': ..., 'end_ch': ..., 'interval': ..., 'last_run': ..., 'status': 'active/paused', 'cookies': ... } }
+# Structure: { job_id: { 'novel_id': ..., 'target_nadi_id': ..., 'chapters_queue': [num1, num2], 'interval': ..., 'last_run': ..., 'status': 'active', 'cookies': ... } }
 active_jobs = {}
+
+# --- Helper: Fetch Chapter From Node Backend ---
+def fetch_chapter_from_backend(novel_id, chapter_num):
+    """
+    Fetches chapter data directly from the Node.js backend.
+    """
+    try:
+        # Assuming the Node backend has a public route for fetching chapters or we use the scraper check route
+        # Since we need CONTENT, we should use the standard reader API route.
+        # GET /api/novels/:novelId/chapters/:chapterId
+        url = f"{NODE_BACKEND_URL}/api/novels/{novel_id}/chapters/{chapter_num}"
+        
+        # We might need a user token, but let's try with the API_SECRET header 
+        # (Assuming you added support or it's a public/semi-public route)
+        # Note: If the route requires 'Authorization: Bearer token', this script might need a valid token.
+        # For now, we simulate a request. 
+        headers = {
+            'Content-Type': 'application/json',
+            # 'Authorization': f'Bearer {token}' # If needed
+        }
+        
+        # NOTE: If your backend strictly requires a User Token for reading content, 
+        # you should implement a login mechanism here or pass a token from the App.
+        # However, following the "Scraper" pattern which uses API_SECRET for privileged access:
+        headers['x-api-secret'] = API_SECRET 
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"❌ Failed to fetch from backend: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        print(f"❌ Error fetching from backend: {e}")
+        return None
 
 # --- Worker Function ---
 def run_publisher_job(job_id):
@@ -38,62 +65,48 @@ def run_publisher_job(job_id):
     if now - job['last_run'] < (job['interval'] * 60): # interval in minutes
         return
 
+    # Check if we have chapters to process
+    if not job['chapters_queue']:
+        job['status'] = 'completed'
+        job['logs'].append("🏁 انتهت جميع الفصول المطلوبة")
+        return
+
     try:
-        # 1. Fetch Chapter from DB
-        novel_id = job['novel_id']
-        current_ch_num = job['current_ch']
+        # Get next chapter number
+        current_ch_num = job['chapters_queue'][0]
         
-        # Determine collection (Novel or TranslationJob?). Assuming 'Novel' has finalized chapters.
-        # We need to find the chapter in the 'novels' collection
-        novel = db.novels.find_one({'_id': ObjectId(novel_id)})
-        if not novel:
-            print(f"❌ Novel not found: {novel_id}")
-            job['status'] = 'error'
-            job['error_msg'] = "Novel not found in DB"
+        # 1. Fetch from Node Backend (HTTP)
+        chapter_data = fetch_chapter_from_backend(job['novel_id'], current_ch_num)
+        
+        if not chapter_data or not chapter_data.get('content'):
+            job['logs'].append(f"❌ الفصل {current_ch_num}: لم يتم العثور على المحتوى في السيرفر")
+            # Move to next to avoid stuck loop? Or pause?
+            # Let's pause to let user fix it
+            job['status'] = 'paused' 
             return
 
-        # Find specific chapter
-        chapter = next((c for c in novel.get('chapters', []) if c['number'] == current_ch_num), None)
-        
-        # If content isn't in the array (lightweight), fetch from Firestore/Separate collection?
-        # Assuming for this tool we fetch content from the 'novels' collection (assuming it's stored there or we need a way to get content)
-        # *Correction based on App logic*: Content is likely in Firestore or bulky MongoDB field. 
-        # Since I am Python, I cannot access Firestore easily without creds. 
-        # I will assume content is in MongoDB for now or passed via job (no, too big).
-        # Let's assume we query the 'TranslationChapter' collection or similar if it exists, OR rely on 'chapters' array having content (if not filtered).
-        
-        # For this implementation, we will assume we can get content. If 'content' is missing in 'chapter', we fail.
-        # Fallback: Check if there's a 'TranslationChapter' collection
-        content = chapter.get('content', '')
-        if not content:
-             # Try finding in separate collection if exists
-             pass 
-
-        if not content:
-             job['logs'].append(f"❌ الفصل {current_ch_num}: لا يوجد محتوى")
-             job['status'] = 'error'
-             return
+        content = chapter_data.get('content', '')
+        title = chapter_data.get('title', f'الفصل {current_ch_num}')
 
         # 2. Publish to Nadi
         client = NadiClient(job['cookies'])
-        title = chapter.get('title', f'الفصل {current_ch_num}')
         
         print(f"🚀 Publishing Ch {current_ch_num} to Nadi...")
         result = client.publish_chapter(job['target_nadi_id'], current_ch_num, title, content)
 
         if result['success']:
             job['logs'].append(f"✅ تم نشر الفصل {current_ch_num} بنجاح")
-            job['current_ch'] += 1
+            # Remove from queue
+            job['chapters_queue'].pop(0) 
             job['last_run'] = now
             job['published_count'] += 1
             
-            if job['current_ch'] > job['end_ch']:
+            if not job['chapters_queue']:
                 job['status'] = 'completed'
                 job['logs'].append("🏁 انتهت المهمة")
         else:
             job['logs'].append(f"❌ فشل نشر الفصل {current_ch_num}: {result['error']}")
-            # Don't stop immediately, maybe retry next interval? Or pause?
-            # Let's pause to be safe
+            # Pause on failure to prevent spamming
             job['status'] = 'paused'
 
     except Exception as e:
@@ -117,16 +130,23 @@ threading.Thread(target=scheduler_loop, daemon=True).start()
 
 # --- API Endpoints ---
 
+@app.route('/', methods=['GET'])
+def health():
+    return "Nadi Publisher Service Running", 200
+
 @app.route('/nadi/jobs', methods=['GET'])
 def get_jobs():
     # Convert dict to list for frontend
     jobs_list = []
     for jid, job in active_jobs.items():
+        total = len(job['chapters_queue']) + job['published_count']
+        current = job['published_count']
+        
         jobs_list.append({
             'id': jid,
             'novelTitle': job['novel_title'],
             'status': job['status'],
-            'progress': f"{job['current_ch']} / {job['end_ch']}",
+            'progress': f"{current} / {total}",
             'lastLog': job['logs'][-1] if job['logs'] else "بدء...",
             'nextRun': job['last_run'] + (job['interval'] * 60) if job['status'] == 'active' else None
         })
@@ -137,19 +157,33 @@ def start_job():
     data = request.json
     job_id = str(int(time.time()))
     
+    # Generate queue of chapters based on input
+    chapters_queue = []
+    
+    # If explicit list is provided (from manual selection)
+    if 'chapters' in data and isinstance(data['chapters'], list):
+        chapters_queue = sorted([int(x) for x in data['chapters']])
+    # Or range
+    elif 'startCh' in data and 'endCh' in data:
+        start = int(data['startCh'])
+        end = int(data['endCh'])
+        chapters_queue = list(range(start, end + 1))
+    
+    if not chapters_queue:
+        return jsonify({"success": False, "message": "No chapters selected"}), 400
+
     active_jobs[job_id] = {
         'id': job_id,
         'novel_id': data['novelId'],
         'novel_title': data['novelTitle'],
         'target_nadi_id': data['nadiId'], # ID on Nadi Website
-        'current_ch': int(data['startCh']),
-        'end_ch': int(data['endCh']),
-        'interval': int(data['interval']), # Minutes
-        'cookies': data['cookies'],
+        'chapters_queue': chapters_queue,
+        'interval': int(data.get('interval', 15)), # Minutes
+        'cookies': data.get('cookies'), # Can be None, client uses default
         'status': 'active',
         'last_run': 0, # Force immediate run
         'published_count': 0,
-        'logs': ["تم إنشاء المهمة"]
+        'logs': [f"تم بدء المهمة: {len(chapters_queue)} فصل"]
     }
     return jsonify({"success": True, "jobId": job_id})
 
@@ -159,6 +193,7 @@ def stop_job():
     job_id = data['jobId']
     if job_id in active_jobs:
         active_jobs[job_id]['status'] = 'paused'
+        active_jobs[job_id]['logs'].append("⏸️ تم الإيقاف يدوياً")
     return jsonify({"success": True})
 
 @app.route('/nadi/delete', methods=['POST'])
@@ -175,7 +210,7 @@ def search_nadi():
     query = data.get('query')
     cookies = data.get('cookies')
     
-    if not query or not cookies:
+    if not query:
         return jsonify([])
         
     client = NadiClient(cookies)
