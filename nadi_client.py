@@ -56,7 +56,7 @@ class NadiClient:
                 for item in results:
                     # 🔥 نأخذ الـ id الرقمي وليس الـ slug، لأن إنشاء الفصل يطلب ID
                     formatted.append({
-                        "id": item.get('id'), # رقمي (Integer)
+                        "id": item.get('id'), # رقمي (Integer) - مهم جداً
                         "slug": item.get('slug'), # نصي
                         "title": item.get('arabic') or item.get('english') or item.get('title'),
                         "cover": item.get('poster_url') or item.get('cover'),
@@ -71,17 +71,19 @@ class NadiClient:
             return []
 
     def format_content(self, text):
-        """تنسيق النص كفقرات HTML للحفاظ على التنسيق"""
+        """تنسيق النص كفقرات HTML للحفاظ على التنسيق كما في السكربت JS"""
         if not text: return ""
         lines = text.split('\n')
         formatted = []
         for line in lines:
             line = line.strip()
             if not line: continue
-            # فواصل النادي
+            
+            # فواصل النادي (ثلاث شرطات أو أكثر)
             if re.match(r'^_{3,}$', line) or re.match(r'^\*{3,}$', line):
                 formatted.append(f'<center>{line}</center>')
             else:
+                # التفاف النص في وسم p مع dir="auto"
                 formatted.append(f'<p dir="auto">{line}</p>')
         return "".join(formatted)
 
@@ -97,8 +99,8 @@ class NadiClient:
             "number": float(chapter_num),
             "title": title,
             "content": html_content,
-            "status": 1, # 1 = منشور
-            "published_at": None 
+            "status": 1, # 1 = منشور (Published)
+            "published_at": None # يعني "الآن"
         }
 
         try:
@@ -112,18 +114,21 @@ class NadiClient:
             return {"success": False, "error": str(e)}
 
     def create_novel(self, title_ar, title_en, description, cover_url, genres, is_translated=True):
-        """إنشاء رواية جديدة"""
+        """إنشاء رواية جديدة في النادي"""
         url = f"{self.base_url}/novels/"
         
         # نوع الرواية: 1 = مترجمة، 2 = مؤلفة (بناء على ملف JS)
         novel_type = 1 if is_translated else 2
         
+        # التأكد من أن التصنيفات مصفوفة أرقام
+        genre_ids = [int(g) for g in genres] if isinstance(genres, list) else []
+
         payload = {
             "arabic": title_ar,
             "english": title_en,
             "about": description,
             "poster_url": cover_url,
-            "genre": genres, # مصفوفة أرقام [2, 5]
+            "genre": genre_ids, # مصفوفة أرقام [2, 5]
             "type": novel_type,
             "complete": False
         }
