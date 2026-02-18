@@ -17,14 +17,10 @@ API_SECRET = os.environ.get('API_SECRET', 'Zeusndndjddnejdjdjdejekk29393838msmsk
 
 active_jobs = {}
 
-# --- Helper: Fetch Chapter From Node Backend ---
 def fetch_chapter_from_backend(novel_id, chapter_num):
     try:
         url = f"{NODE_BACKEND_URL}/api/novels/{novel_id}/chapters/{chapter_num}"
-        headers = {
-            'Content-Type': 'application/json',
-            'x-api-secret': API_SECRET 
-        }
+        headers = { 'Content-Type': 'application/json', 'x-api-secret': API_SECRET }
         response = requests.get(url, headers=headers, timeout=15)
         if response.status_code == 200:
             return response.json()
@@ -33,7 +29,6 @@ def fetch_chapter_from_backend(novel_id, chapter_num):
         print(f"❌ Error fetching from backend: {e}")
         return None
 
-# --- Worker Function ---
 def run_publisher_job(job_id):
     job = active_jobs.get(job_id)
     if not job or job['status'] != 'active':
@@ -51,23 +46,26 @@ def run_publisher_job(job_id):
     try:
         current_ch_num = job['chapters_queue'][0]
         
-        # 1. Fetch content locally
+        # 1. جلب المحتوى محلياً
         chapter_data = fetch_chapter_from_backend(job['novel_id'], current_ch_num)
         
         if not chapter_data or not chapter_data.get('content'):
-            job['logs'].append(f"❌ الفصل {current_ch_num}: لم يتم العثور على المحتوى")
+            job['logs'].append(f"❌ الفصل {current_ch_num}: لا يوجد محتوى")
+            # لا نوقف المهمة، ننتقل للفصل التالي في المحاولة القادمة أو نوقف مؤقتاً
             job['status'] = 'paused' 
             return
 
         content = chapter_data.get('content', '')
         title = chapter_data.get('title', f'الفصل {current_ch_num}')
 
-        # 2. Publish to Nadi
-        # Use provided cookies OR default hardcoded ones in client
+        # 2. النشر
         client = NadiClient(job.get('cookies'))
         
-        print(f"🚀 Publishing Ch {current_ch_num} to Nadi...")
-        result = client.publish_chapter(job['target_nadi_id'], current_ch_num, title, content)
+        # 🔥 تأكد من استخدام ID الرقمي
+        target_nadi_id = job['target_nadi_id']
+        
+        print(f"🚀 Publishing Ch {current_ch_num} to Nadi ID {target_nadi_id}...")
+        result = client.publish_chapter(target_nadi_id, current_ch_num, title, content)
 
         if result['success']:
             job['logs'].append(f"✅ تم نشر الفصل {current_ch_num}")
@@ -87,7 +85,6 @@ def run_publisher_job(job_id):
         job['logs'].append(f"❌ خطأ: {str(e)}")
         job['status'] = 'error'
 
-# --- Background Thread ---
 def scheduler_loop():
     while True:
         try:
@@ -104,7 +101,7 @@ threading.Thread(target=scheduler_loop, daemon=True).start()
 
 @app.route('/', methods=['GET'])
 def health():
-    return "Nadi Publisher Service V2 Running", 200
+    return "Nadi Publisher V3", 200
 
 @app.route('/nadi/jobs', methods=['GET'])
 def get_jobs():
@@ -115,10 +112,11 @@ def get_jobs():
         jobs_list.append({
             'id': jid,
             'novelTitle': job['novel_title'],
+            'cover': job.get('cover', ''), # Add cover to response
             'status': job['status'],
             'progress': f"{current} / {total}",
             'lastLog': job['logs'][-1] if job['logs'] else "...",
-            'nextRun': job['last_run'] + (job['interval'] * 60) if job['status'] == 'active' else None
+            'nadiId': job['target_nadi_id']
         })
     return jsonify(jobs_list)
 
@@ -138,7 +136,8 @@ def start_job():
         'id': job_id,
         'novel_id': data['novelId'],
         'novel_title': data['novelTitle'],
-        'target_nadi_id': data['nadiId'],
+        'cover': data.get('cover', ''),
+        'target_nadi_id': data['nadiId'], # MUST BE INTEGER ID
         'chapters_queue': chapters_queue,
         'interval': int(data.get('interval', 15)),
         'cookies': data.get('cookies'), 
@@ -172,8 +171,7 @@ def search_nadi():
     query = data.get('query')
     cookies = data.get('cookies')
     
-    if not query:
-        return jsonify([])
+    if not query: return jsonify([])
         
     client = NadiClient(cookies)
     results = client.search_novel(query)
@@ -189,7 +187,8 @@ def create_novel():
         title_en=data['titleEn'],
         description=data['description'],
         cover_url=data['cover'],
-        genres=data['genres'] # List of IDs e.g. [1, 5]
+        genres=data['genres'], # Expecting list of IDs e.g. [2, 7]
+        is_translated=data.get('isTranslated', True)
     )
     return jsonify(result)
 
