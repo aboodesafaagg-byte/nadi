@@ -6,31 +6,28 @@ import re
 # 🔥 القيم المستخرجة من الصور (جلسة حقيقية)
 REAL_SESSION_ID = "p2u5rg3a873jfq4s9wqr0hgpise6s545"
 REAL_CSRF_TOKEN = "r5N1EuEWndcd8KDEppfqeXqix12BfTPGby1QhySMCH22lg7B08pl6lqBHRg8xNsui"
-# تم فك الترميز من Token%20302... إلى Token 302...
 REAL_AUTH_TOKEN = "Token 302bd3c2f811704f0fddce79a14f56250f9cc652" 
 
 class NadiClient:
     def __init__(self, cookies_str=None):
+        # 🔥 الرابط الصحيح للـ API
         self.base_url = "https://api.rewayat.club/api"
         
-        # بناء سلسلة الكوكيز الصلبة إذا لم يتم تمرير كوكيز
+        # بناء سلسلة الكوكيز الصلبة
         if not cookies_str:
             self.cookies_dict = {
                 "sessionid": REAL_SESSION_ID,
                 "csrftoken": REAL_CSRF_TOKEN,
                 "auth.strategy": "google",
-                "auth._token.google": REAL_AUTH_TOKEN.replace(" ", "%20") # Re-encode for cookie
+                "auth._token.google": REAL_AUTH_TOKEN.replace(" ", "%20")
             }
-            # تحويلها لنص للهيدر إذا لزم الأمر، لكن Requests يفضل Dict
         else:
-            # محاولة تحليل النص الوارد
             self.cookies_dict = {}
             for pair in cookies_str.split(';'):
                 if '=' in pair:
                     k, v = pair.strip().split('=', 1)
                     self.cookies_dict[k] = v
 
-        # استخراج التوكن والـ CSRF لاستخدامهم في الهيدر
         self.auth_token = self.cookies_dict.get("auth._token.google", REAL_AUTH_TOKEN).replace("%20", " ")
         self.csrf_token = self.cookies_dict.get("csrftoken", REAL_CSRF_TOKEN)
 
@@ -45,26 +42,22 @@ class NadiClient:
         }
 
     def search_novel(self, query):
-        """بحث حقيقي في مكتبة نادي الروايات"""
+        """بحث حقيقي - استخراج الـ ID الرقمي ضروري للنشر"""
         try:
-            # بناءً على ملف المكتبة، البحث يتم عبر باراميتر search
             url = f"{self.base_url}/novels/"
-            params = {
-                "search": query,
-                "limit": 10  # أو page_size
-            }
+            params = { "search": query, "limit": 10 }
             res = requests.get(url, params=params, headers=self.headers, cookies=self.cookies_dict)
             
             if res.status_code == 200:
                 data = res.json()
-                # النتائج عادة تكون في root array أو داخل مفتاح results (Django REST default)
                 results = data.get('results', data) if isinstance(data, dict) else data
                 
-                # تنسيق البيانات للتطبيق
                 formatted = []
                 for item in results:
+                    # 🔥 نأخذ الـ id الرقمي وليس الـ slug، لأن إنشاء الفصل يطلب ID
                     formatted.append({
-                        "id": item.get('slug') or item.get('id'), # Slug هو المعرف في النادي غالباً
+                        "id": item.get('id'), # رقمي (Integer)
+                        "slug": item.get('slug'), # نصي
                         "title": item.get('arabic') or item.get('english') or item.get('title'),
                         "cover": item.get('poster_url') or item.get('cover'),
                         "author": "نادي الروايات"
@@ -78,33 +71,34 @@ class NadiClient:
             return []
 
     def format_content(self, text):
-        """تنسيق النص ليناسب محرر النادي (HTML)"""
+        """تنسيق النص كفقرات HTML للحفاظ على التنسيق"""
+        if not text: return ""
         lines = text.split('\n')
         formatted = []
         for line in lines:
             line = line.strip()
             if not line: continue
-            if re.match(r'^_{3,}$', line):
+            # فواصل النادي
+            if re.match(r'^_{3,}$', line) or re.match(r'^\*{3,}$', line):
                 formatted.append(f'<center>{line}</center>')
             else:
                 formatted.append(f'<p dir="auto">{line}</p>')
         return "".join(formatted)
 
-    def publish_chapter(self, novel_slug_or_id, chapter_num, title, content):
-        """نشر فصل جديد"""
+    def publish_chapter(self, novel_id_numeric, chapter_num, title, content):
+        """نشر فصل جديد - يستخدم ID الرقمي"""
+        # 🔥 الرابط يجب أن ينتهي بـ slash /
         url = f"{self.base_url}/chapters/"
         
         html_content = self.format_content(content)
         
-        # بناءً على Vue component، البيانات المطلوبة هي:
-        # novel (slug/id), number, title, content, status, published_at
         payload = {
-            "novel": novel_slug_or_id, 
+            "novel": int(novel_id_numeric), # يجب أن يكون رقم الرواية (ID) وليس الاسم أو الـ Slug
             "number": float(chapter_num),
             "title": title,
             "content": html_content,
-            "status": 1, # 1 usually means Published in Django choices, or "published" string
-            "published_at": None # Now
+            "status": 1, # 1 = منشور
+            "published_at": None 
         }
 
         try:
@@ -117,20 +111,20 @@ class NadiClient:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def create_novel(self, title_ar, title_en, description, cover_url, genres):
-        """إنشاء رواية جديدة في النادي"""
+    def create_novel(self, title_ar, title_en, description, cover_url, genres, is_translated=True):
+        """إنشاء رواية جديدة"""
         url = f"{self.base_url}/novels/"
         
-        # بناءً على ملف "إنشاء رواية"، الحقول هي:
-        # arabic, english, about, poster_url, genre (array of IDs), type (1=translated, 2=original)
+        # نوع الرواية: 1 = مترجمة، 2 = مؤلفة (بناء على ملف JS)
+        novel_type = 1 if is_translated else 2
         
         payload = {
             "arabic": title_ar,
             "english": title_en,
             "about": description,
-            "poster_url": cover_url, # يفترض أنك رفعت الصورة مسبقاً أو ترسل رابط مباشر
-            "genre": genres, # [1, 2, 5] IDs
-            "original": False, # 1=Translated usually
+            "poster_url": cover_url,
+            "genre": genres, # مصفوفة أرقام [2, 5]
+            "type": novel_type,
             "complete": False
         }
 
@@ -138,7 +132,12 @@ class NadiClient:
             res = requests.post(url, json=payload, headers=self.headers, cookies=self.cookies_dict)
             if res.status_code in [200, 201]:
                 data = res.json()
-                return {"success": True, "id": data.get('slug') or data.get('id')}
+                return {
+                    "success": True, 
+                    "id": data.get('id'), # الرقم
+                    "slug": data.get('slug'), 
+                    "title": data.get('arabic')
+                }
             else:
                 return {"success": False, "error": f"HTTP {res.status_code}: {res.text}"}
         except Exception as e:
