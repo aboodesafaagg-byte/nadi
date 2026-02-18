@@ -10,10 +10,9 @@ REAL_AUTH_TOKEN = "Token 302bd3c2f811704f0fddce79a14f56250f9cc652"
 
 class NadiClient:
     def __init__(self, cookies_str=None):
-        # 🔥 الرابط الصحيح للـ API
         self.base_url = "https://api.rewayat.club/api"
         
-        # بناء سلسلة الكوكيز الصلبة
+        # بناء الكوكيز الافتراضية القوية
         if not cookies_str:
             self.cookies_dict = {
                 "sessionid": REAL_SESSION_ID,
@@ -50,14 +49,14 @@ class NadiClient:
             
             if res.status_code == 200:
                 data = res.json()
+                # النتائج قد تكون في 'results' أو مباشرة في المصفوفة
                 results = data.get('results', data) if isinstance(data, dict) else data
                 
                 formatted = []
                 for item in results:
-                    # 🔥 نأخذ الـ id الرقمي وليس الـ slug، لأن إنشاء الفصل يطلب ID
                     formatted.append({
-                        "id": item.get('id'), # رقمي (Integer) - مهم جداً
-                        "slug": item.get('slug'), # نصي
+                        "id": item.get('id'), # رقمي (Integer) - هام جداً للنشر
+                        "slug": item.get('slug'), 
                         "title": item.get('arabic') or item.get('english') or item.get('title'),
                         "cover": item.get('poster_url') or item.get('cover'),
                         "author": "نادي الروايات"
@@ -71,36 +70,66 @@ class NadiClient:
             return []
 
     def format_content(self, text):
-        """تنسيق النص كفقرات HTML للحفاظ على التنسيق كما في السكربت JS"""
+        """
+        تنسيق النص ليكون مطابقاً تماماً لما يفعله سكربت JS
+        - دمج الأسطر المتتالية في فقرة واحدة.
+        - فصل الفقرات عند وجود سطر فارغ.
+        - دعم فواصل <center>.
+        """
         if not text: return ""
+        
         lines = text.split('\n')
-        formatted = []
+        paragraphs = []
+        current_paragraph = []
+
         for line in lines:
-            line = line.strip()
-            if not line: continue
+            trimmed = line.strip()
             
-            # فواصل النادي (ثلاث شرطات أو أكثر)
-            if re.match(r'^_{3,}$', line) or re.match(r'^\*{3,}$', line):
-                formatted.append(f'<center>{line}</center>')
+            # سطر فارغ -> نهاية الفقرة الحالية
+            if not trimmed:
+                if current_paragraph:
+                    paragraphs.append(" ".join(current_paragraph))
+                    current_paragraph = []
+                continue
+            
+            # فواصل (____ أو ****) -> نهاية الفقرة + إضافة الفاصل
+            if re.match(r'^_{3,}$', trimmed) or re.match(r'^\*{3,}$', trimmed):
+                if current_paragraph:
+                    paragraphs.append(" ".join(current_paragraph))
+                    current_paragraph = []
+                paragraphs.append(f"<center>{trimmed}</center>")
+                continue
+            
+            # نص عادي -> أضفه للفقرة الحالية
+            current_paragraph.append(trimmed)
+        
+        # إضافة الفقرة الأخيرة إن وجدت
+        if current_paragraph:
+            paragraphs.append(" ".join(current_paragraph))
+            
+        # تحويل القائمة إلى HTML
+        html_parts = []
+        for p in paragraphs:
+            if p.startswith("<center>"):
+                html_parts.append(p)
             else:
-                # التفاف النص في وسم p مع dir="auto"
-                formatted.append(f'<p dir="auto">{line}</p>')
-        return "".join(formatted)
+                html_parts.append(f'<p dir="auto">{p}</p>')
+                
+        return "".join(html_parts)
 
     def publish_chapter(self, novel_id_numeric, chapter_num, title, content):
         """نشر فصل جديد - يستخدم ID الرقمي"""
-        # 🔥 الرابط يجب أن ينتهي بـ slash /
         url = f"{self.base_url}/chapters/"
         
         html_content = self.format_content(content)
         
         payload = {
-            "novel": int(novel_id_numeric), # يجب أن يكون رقم الرواية (ID) وليس الاسم أو الـ Slug
+            "novel": int(novel_id_numeric), # يجب أن يكون رقم الرواية (ID)
             "number": float(chapter_num),
             "title": title,
             "content": html_content,
-            "status": 1, # 1 = منشور (Published)
-            "published_at": None # يعني "الآن"
+            "status": 1, # 1 = منشور
+            "published_at": None 
         }
 
         try:
@@ -117,7 +146,7 @@ class NadiClient:
         """إنشاء رواية جديدة في النادي"""
         url = f"{self.base_url}/novels/"
         
-        # نوع الرواية: 1 = مترجمة، 2 = مؤلفة (بناء على ملف JS)
+        # نوع الرواية: 1 = مترجمة، 2 = مؤلفة
         novel_type = 1 if is_translated else 2
         
         # التأكد من أن التصنيفات مصفوفة أرقام
@@ -128,9 +157,9 @@ class NadiClient:
             "english": title_en,
             "about": description,
             "poster_url": cover_url,
-            "genre": genre_ids, # مصفوفة أرقام [2, 5]
+            "genre": genre_ids, # [2, 5]
             "type": novel_type,
-            "complete": False
+            "complete": False # افتراضياً غير مكتملة
         }
 
         try:
