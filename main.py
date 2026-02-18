@@ -50,8 +50,7 @@ def run_publisher_job(job_id):
         chapter_data = fetch_chapter_from_backend(job['novel_id'], current_ch_num)
         
         if not chapter_data or not chapter_data.get('content'):
-            job['logs'].append(f"❌ الفصل {current_ch_num}: لا يوجد محتوى")
-            # لا نوقف المهمة، ننتقل للفصل التالي في المحاولة القادمة أو نوقف مؤقتاً
+            job['logs'].append(f"❌ الفصل {current_ch_num}: لا يوجد محتوى في السيرفر المحلي")
             job['status'] = 'paused' 
             return
 
@@ -101,7 +100,7 @@ threading.Thread(target=scheduler_loop, daemon=True).start()
 
 @app.route('/', methods=['GET'])
 def health():
-    return "Nadi Publisher V3", 200
+    return "Nadi Publisher V4.0", 200
 
 @app.route('/nadi/jobs', methods=['GET'])
 def get_jobs():
@@ -130,7 +129,7 @@ def start_job():
         chapters_queue = sorted([int(x) for x in data['chapters']])
     
     if not chapters_queue:
-        return jsonify({"success": False, "message": "No chapters"}), 400
+        return jsonify({"success": False, "message": "No chapters selected"}), 400
 
     active_jobs[job_id] = {
         'id': job_id,
